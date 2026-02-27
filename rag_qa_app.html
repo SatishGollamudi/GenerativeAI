@@ -1,0 +1,967 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>DocMind — RAG Q&A</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:ital,wght@0,400;0,500;1,400&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet"/>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:       #0b0c10;
+    --surface:  #131520;
+    --surface2: #1a1d2e;
+    --border:   #252840;
+    --accent:   #6ee7b7;
+    --accent2:  #818cf8;
+    --warn:     #f59e0b;
+    --text:     #e2e8f0;
+    --muted:    #64748b;
+    --danger:   #f87171;
+    --radius:   14px;
+    --font-head: 'Syne', sans-serif;
+    --font-body: 'DM Sans', sans-serif;
+    --font-mono: 'DM Mono', monospace;
+  }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    font-size: 15px;
+    line-height: 1.65;
+  }
+
+  /* ── noise overlay ── */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+    opacity: 0.03;
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* ── grid mesh bg ── */
+  .mesh {
+    position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none;
+  }
+  .mesh::before {
+    content: '';
+    position: absolute;
+    width: 700px; height: 700px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(110,231,183,.07) 0%, transparent 70%);
+    top: -200px; right: -200px;
+    animation: drift 12s ease-in-out infinite alternate;
+  }
+  .mesh::after {
+    content: '';
+    position: absolute;
+    width: 500px; height: 500px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(129,140,248,.06) 0%, transparent 70%);
+    bottom: -100px; left: -100px;
+    animation: drift 15s ease-in-out infinite alternate-reverse;
+  }
+  @keyframes drift { from { transform: translate(0,0); } to { transform: translate(40px, 30px); } }
+
+  /* ── layout ── */
+  .app {
+    position: relative; z-index: 1;
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    grid-template-rows: auto 1fr;
+    height: 100vh;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+
+  /* ── header ── */
+  .header {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 32px;
+    border-bottom: 1px solid var(--border);
+    backdrop-filter: blur(8px);
+    background: rgba(11,12,16,.7);
+  }
+  .logo {
+    display: flex; align-items: center; gap: 12px;
+  }
+  .logo-icon {
+    width: 38px; height: 38px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border-radius: 10px;
+    display: grid; place-items: center;
+    font-size: 18px;
+    box-shadow: 0 0 24px rgba(110,231,183,.25);
+  }
+  .logo-text {
+    font-family: var(--font-head);
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .badge {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 99px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    letter-spacing: .5px;
+  }
+  .header-right { display: flex; gap: 8px; align-items: center; }
+  .model-badge {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 4px 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 99px;
+    color: var(--accent2);
+  }
+
+  /* ── sidebar ── */
+  .sidebar {
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: rgba(19,21,32,.5);
+  }
+
+  .sidebar-section {
+    padding: 24px;
+    border-bottom: 1px solid var(--border);
+  }
+  .section-label {
+    font-family: var(--font-head);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 16px;
+  }
+
+  /* ── drop zone ── */
+  .drop-zone {
+    border: 2px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 28px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all .25s;
+    background: transparent;
+    position: relative;
+  }
+  .drop-zone:hover, .drop-zone.drag-over {
+    border-color: var(--accent);
+    background: rgba(110,231,183,.04);
+  }
+  .drop-zone input[type=file] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%;
+  }
+  .drop-icon { font-size: 28px; margin-bottom: 8px; }
+  .drop-title { font-family: var(--font-head); font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+  .drop-sub { font-size: 12px; color: var(--muted); }
+
+  /* ── api key ── */
+  .input-group { margin-bottom: 12px; }
+  .input-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; display: block; }
+  .input-field {
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 9px 14px;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    outline: none;
+    transition: border-color .2s;
+  }
+  .input-field:focus { border-color: var(--accent2); }
+  .input-field::placeholder { color: var(--muted); }
+
+  select.input-field { cursor: pointer; }
+
+  /* ── doc list ── */
+  .doc-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 24px;
+  }
+  .doc-list::-webkit-scrollbar { width: 4px; }
+  .doc-list::-webkit-scrollbar-track { background: transparent; }
+  .doc-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+  .doc-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    margin-bottom: 8px;
+    animation: slideIn .3s ease;
+    position: relative;
+    overflow: hidden;
+  }
+  .doc-item::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    background: linear-gradient(180deg, var(--accent), var(--accent2));
+    border-radius: 3px 0 0 3px;
+  }
+  @keyframes slideIn { from { opacity:0; transform: translateX(-10px); } to { opacity:1; transform: none; } }
+
+  .doc-icon { font-size: 16px; flex-shrink: 0; }
+  .doc-info { flex: 1; min-width: 0; }
+  .doc-name { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .doc-meta { font-family: var(--font-mono); font-size: 10px; color: var(--muted); margin-top: 1px; }
+  .doc-remove {
+    background: none; border: none; color: var(--muted);
+    cursor: pointer; padding: 4px; border-radius: 4px;
+    font-size: 14px; line-height: 1; transition: color .15s;
+    flex-shrink: 0;
+  }
+  .doc-remove:hover { color: var(--danger); }
+
+  .empty-docs {
+    text-align: center;
+    color: var(--muted);
+    font-size: 13px;
+    padding: 32px 0;
+  }
+
+  /* ── status pills ── */
+  .status-bar {
+    padding: 12px 24px;
+    border-top: 1px solid var(--border);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .pill {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    padding: 3px 10px;
+    border-radius: 99px;
+    display: flex; align-items: center; gap: 5px;
+  }
+  .pill.ok    { background: rgba(110,231,183,.12); color: var(--accent); border: 1px solid rgba(110,231,183,.25); }
+  .pill.warn  { background: rgba(245,158,11,.12); color: var(--warn); border: 1px solid rgba(245,158,11,.25); }
+  .pill.error { background: rgba(248,113,113,.12); color: var(--danger); border: 1px solid rgba(248,113,113,.25); }
+  .pill-dot { width:6px; height:6px; border-radius: 50%; background: currentColor; }
+
+  /* ── chat area ── */
+  .chat-area {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+  }
+  .messages::-webkit-scrollbar { width: 4px; }
+  .messages::-webkit-scrollbar-track { background: transparent; }
+  .messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+  /* ── welcome ── */
+  .welcome {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    text-align: center; gap: 16px;
+    opacity: .6;
+    animation: fadeIn .6s ease;
+  }
+  @keyframes fadeIn { from { opacity:0; transform: translateY(10px); } to { opacity:.6; transform: none; } }
+  .welcome-icon { font-size: 48px; }
+  .welcome h2 { font-family: var(--font-head); font-size: 22px; font-weight: 700; }
+  .welcome p { font-size: 14px; color: var(--muted); max-width: 320px; }
+
+  /* ── message bubbles ── */
+  .msg { display: flex; gap: 14px; animation: msgIn .3s ease; }
+  @keyframes msgIn { from { opacity:0; transform: translateY(8px); } to { opacity:1; transform: none; } }
+  .msg.user { flex-direction: row-reverse; }
+
+  .avatar {
+    width: 36px; height: 36px; border-radius: 10px;
+    display: grid; place-items: center; font-size: 16px;
+    flex-shrink: 0; align-self: flex-start;
+  }
+  .avatar.ai {
+    background: linear-gradient(135deg, rgba(110,231,183,.2), rgba(129,140,248,.2));
+    border: 1px solid var(--border);
+  }
+  .avatar.user-av {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+  }
+
+  .bubble {
+    max-width: 680px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px 20px;
+    font-size: 14.5px;
+    line-height: 1.7;
+  }
+  .msg.user .bubble {
+    background: rgba(129,140,248,.1);
+    border-color: rgba(129,140,248,.25);
+  }
+  .bubble-text { white-space: pre-wrap; word-break: break-word; }
+
+  /* ── sources ── */
+  .sources {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+  }
+  .sources-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .source-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 4px 10px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin: 3px 4px 3px 0;
+    color: var(--text);
+  }
+  .source-score {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(110,231,183,.15);
+    color: var(--accent);
+  }
+
+  /* ── thinking indicator ── */
+  .thinking {
+    display: flex; gap: 14px; align-items: flex-start;
+    animation: msgIn .3s ease;
+  }
+  .typing-dots {
+    display: flex; gap: 5px; align-items: center; padding: 16px 20px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+  }
+  .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--accent);
+    animation: bounce 1.2s ease-in-out infinite;
+  }
+  .dot:nth-child(2) { animation-delay: .2s; background: var(--accent2); }
+  .dot:nth-child(3) { animation-delay: .4s; }
+  @keyframes bounce { 0%,60%,100%{transform:translateY(0)} 30%{transform:translateY(-8px)} }
+
+  /* ── input bar ── */
+  .input-bar {
+    padding: 20px 32px;
+    border-top: 1px solid var(--border);
+    background: rgba(11,12,16,.7);
+    backdrop-filter: blur(12px);
+    display: flex; gap: 12px; align-items: flex-end;
+  }
+  .input-wrap {
+    flex: 1;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    display: flex;
+    align-items: flex-end;
+    padding: 4px 4px 4px 16px;
+    transition: border-color .2s;
+  }
+  .input-wrap:focus-within { border-color: var(--accent2); box-shadow: 0 0 0 3px rgba(129,140,248,.1); }
+  .chat-input {
+    flex: 1;
+    background: none;
+    border: none;
+    outline: none;
+    resize: none;
+    color: var(--text);
+    font-family: var(--font-body);
+    font-size: 15px;
+    line-height: 1.5;
+    padding: 10px 0;
+    min-height: 44px;
+    max-height: 160px;
+    overflow-y: auto;
+  }
+  .chat-input::placeholder { color: var(--muted); }
+  .send-btn {
+    width: 40px; height: 40px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border: none; border-radius: 9px;
+    cursor: pointer;
+    display: grid; place-items: center;
+    font-size: 18px;
+    transition: opacity .2s, transform .15s;
+    flex-shrink: 0;
+    margin: 2px;
+  }
+  .send-btn:hover { opacity: .9; transform: scale(1.05); }
+  .send-btn:disabled { opacity: .35; cursor: not-allowed; transform: none; }
+
+  /* ── stats ── */
+  .stats-row {
+    display: flex; gap: 8px; flex-wrap: wrap; padding: 0 32px 12px;
+  }
+  .stat {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted);
+    display: flex; align-items: center; gap: 5px;
+  }
+  .stat span { color: var(--text); font-weight: 500; }
+
+  /* ── processing bar ── */
+  .proc-bar {
+    height: 2px;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    border-radius: 2px;
+    transform-origin: left;
+    transform: scaleX(0);
+    transition: transform .3s;
+  }
+  .proc-bar.active { animation: loading 1.5s ease-in-out infinite; }
+  @keyframes loading {
+    0%   { transform: scaleX(0) translateX(0); }
+    50%  { transform: scaleX(1) translateX(0); }
+    100% { transform: scaleX(0) translateX(100%); }
+  }
+
+  /* ── toast ── */
+  .toast-container {
+    position: fixed; top: 20px; right: 20px; z-index: 10000;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .toast {
+    padding: 12px 18px;
+    border-radius: 10px;
+    font-size: 13px;
+    border: 1px solid;
+    backdrop-filter: blur(12px);
+    animation: toastIn .3s ease;
+    max-width: 320px;
+  }
+  @keyframes toastIn { from { opacity:0; transform: translateX(20px); } to { opacity:1; transform: none; } }
+  .toast.success { background: rgba(110,231,183,.15); border-color: rgba(110,231,183,.3); color: var(--accent); }
+  .toast.error   { background: rgba(248,113,113,.15); border-color: rgba(248,113,113,.3); color: var(--danger); }
+  .toast.info    { background: rgba(129,140,248,.15); border-color: rgba(129,140,248,.3); color: var(--accent2); }
+
+  /* ── scrollbar ── */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+  @media (max-width: 768px) {
+    .app { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr; height: auto; min-height: 100vh; }
+    .sidebar { border-right: none; border-bottom: 1px solid var(--border); }
+  }
+</style>
+</head>
+<body>
+<div class="mesh"></div>
+<div class="toast-container" id="toasts"></div>
+
+<div class="app">
+  <!-- HEADER -->
+  <header class="header">
+    <div class="logo">
+      <div class="logo-icon">🧠</div>
+      <div class="logo-text">DocMind</div>
+      <div class="badge">RAG ENGINE</div>
+    </div>
+    <div class="header-right">
+      <div class="model-badge" id="modelBadge">groq / llama3-70b</div>
+    </div>
+  </header>
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <!-- API Key + Settings -->
+    <div class="sidebar-section">
+      <div class="section-label">Configuration</div>
+      <div class="input-group">
+        <label class="input-label">Groq API Key</label>
+        <input type="password" class="input-field" id="apiKey" placeholder="gsk_…" />
+      </div>
+      <div class="input-group">
+        <label class="input-label">Model</label>
+        <select class="input-field" id="modelSelect" onchange="updateModelBadge()">
+          <option value="llama3-70b-8192">llama3-70b-8192</option>
+          <option value="llama3-8b-8192">llama3-8b-8192</option>
+          <option value="mixtral-8x7b-32768">mixtral-8x7b-32768</option>
+          <option value="gemma2-9b-it">gemma2-9b-it</option>
+        </select>
+      </div>
+      <div class="input-group">
+        <label class="input-label">Chunks to retrieve (top-k)</label>
+        <input type="number" class="input-field" id="topK" value="5" min="1" max="15" />
+      </div>
+    </div>
+
+    <!-- Upload -->
+    <div class="sidebar-section">
+      <div class="section-label">Documents</div>
+      <div class="drop-zone" id="dropZone">
+        <input type="file" id="fileInput" multiple accept=".pdf,.txt,.md,.csv" />
+        <div class="drop-icon">📄</div>
+        <div class="drop-title">Drop files here</div>
+        <div class="drop-sub">PDF, TXT, MD, CSV supported</div>
+      </div>
+    </div>
+
+    <!-- Doc list -->
+    <div class="doc-list" id="docList">
+      <div class="empty-docs" id="emptyDocs">No documents ingested yet.<br/>Upload files above to begin.</div>
+    </div>
+
+    <!-- Status -->
+    <div class="status-bar">
+      <div class="pill warn" id="statusPill">
+        <div class="pill-dot"></div>
+        <span id="statusText">No docs loaded</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- CHAT -->
+  <section class="chat-area">
+    <div class="proc-bar" id="procBar"></div>
+
+    <div class="messages" id="messages">
+      <div class="welcome" id="welcome">
+        <div class="welcome-icon">🔍</div>
+        <h2>Ask your documents anything</h2>
+        <p>Upload PDF or text files on the left, then ask questions here. Answers are grounded in your documents with source citations.</p>
+      </div>
+    </div>
+
+    <div class="stats-row" id="statsRow" style="display:none;">
+      <div class="stat">Chunks indexed: <span id="statChunks">0</span></div>
+      <div class="stat">Docs loaded: <span id="statDocs">0</span></div>
+      <div class="stat">Queries: <span id="statQueries">0</span></div>
+    </div>
+
+    <div class="input-bar">
+      <div class="input-wrap">
+        <textarea class="chat-input" id="chatInput" rows="1"
+          placeholder="Ask a question about your documents…"></textarea>
+      </div>
+      <button class="send-btn" id="sendBtn" onclick="sendQuery()" title="Send (Enter)">↑</button>
+    </div>
+  </section>
+</div>
+
+<script type="module">
+// ════════════════════════════════════════════
+//  In-browser RAG System (uses Groq API directly)
+//  Vector search via cosine similarity in JS
+// ════════════════════════════════════════════
+
+// ── Utilities ────────────────────────────────
+function toast(msg, type = 'info', duration = 3500) {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  document.getElementById('toasts').appendChild(el);
+  setTimeout(() => el.remove(), duration);
+}
+
+function setLoading(on) {
+  const bar = document.getElementById('procBar');
+  const btn = document.getElementById('sendBtn');
+  bar.classList.toggle('active', on);
+  btn.disabled = on;
+}
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 160) + 'px';
+}
+
+// ── State ────────────────────────────────────
+const state = {
+  documents: [],      // { name, text, chunks }
+  embeddings: [],     // { chunk, embedding, docName, chunkIdx }
+  queryCount: 0,
+  embeddingModel: null,
+};
+
+// ── Simple tokenizer / chunker ────────────────
+function chunkText(text, size = 500, overlap = 60) {
+  const words = text.split(/\s+/).filter(Boolean);
+  const chunks = [];
+  for (let i = 0; i < words.length; i += size - overlap) {
+    const chunk = words.slice(i, i + size).join(' ');
+    if (chunk.trim()) chunks.push(chunk);
+  }
+  return chunks;
+}
+
+// ── PDF extraction ────────────────────────────
+async function extractPDF(file) {
+  const { GlobalWorkerOptions, getDocument } = await import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.mjs');
+  GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.mjs';
+  const buf = await file.arrayBuffer();
+  const pdf = await getDocument({ data: buf }).promise;
+  let text = '';
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const content = await page.getTextContent();
+    text += content.items.map(i => i.str).join(' ') + '\n';
+  }
+  return text;
+}
+
+// ── TF-IDF style embeddings (local, no API) ───
+// We use a simple bag-of-words TF-IDF for embeddings in the browser
+// For production, swap this out with the Groq + sentence-transformers backend
+
+class BagOfWordsEmbedder {
+  constructor() { this.vocab = new Map(); this.idf = new Map(); }
+
+  tokenize(text) {
+    return text.toLowerCase()
+      .replace(/[^\w\s]/g, ' ')
+      .split(/\s+/)
+      .filter(w => w.length > 2 && !STOP_WORDS.has(w));
+  }
+
+  buildVocab(texts) {
+    const docFreq = new Map();
+    const N = texts.length;
+    texts.forEach(text => {
+      const tokens = new Set(this.tokenize(text));
+      tokens.forEach(t => docFreq.set(t, (docFreq.get(t) || 0) + 1));
+    });
+    let idx = 0;
+    docFreq.forEach((df, term) => {
+      this.vocab.set(term, idx++);
+      this.idf.set(term, Math.log((N + 1) / (df + 1)) + 1);
+    });
+  }
+
+  embed(text) {
+    const tokens = this.tokenize(text);
+    const tf = new Map();
+    tokens.forEach(t => tf.set(t, (tf.get(t) || 0) + 1));
+    const vec = new Float32Array(this.vocab.size);
+    tf.forEach((freq, term) => {
+      const idx = this.vocab.get(term);
+      if (idx !== undefined) {
+        vec[idx] = (freq / tokens.length) * (this.idf.get(term) || 1);
+      }
+    });
+    return normalize(vec);
+  }
+}
+
+function normalize(vec) {
+  let mag = 0;
+  vec.forEach(v => mag += v * v);
+  mag = Math.sqrt(mag) || 1;
+  return vec.map(v => v / mag);
+}
+
+function cosine(a, b) {
+  let dot = 0;
+  const len = Math.min(a.length, b.length);
+  for (let i = 0; i < len; i++) dot += a[i] * b[i];
+  return dot;
+}
+
+const STOP_WORDS = new Set([
+  'the','a','an','and','or','but','in','on','at','to','for','of','with',
+  'is','are','was','were','be','been','being','have','has','had','do','does',
+  'did','will','would','could','should','may','might','shall','can','this',
+  'that','these','those','it','its','they','them','their','we','our','i',
+  'you','your','he','she','his','her','not','no','by','from','as','if','so',
+]);
+
+// ── Document ingestion ────────────────────────
+async function ingestFile(file) {
+  let text = '';
+
+  if (file.name.endsWith('.pdf')) {
+    try {
+      text = await extractPDF(file);
+    } catch(e) {
+      toast(`PDF parse error: ${e.message}`, 'error');
+      return;
+    }
+  } else {
+    text = await file.text();
+  }
+
+  const chunks = chunkText(text);
+  state.documents.push({ name: file.name, text, chunks });
+  rebuildIndex();
+  renderDocList();
+  updateStats();
+  toast(`✓ Ingested "${file.name}" — ${chunks.length} chunks`, 'success');
+}
+
+function rebuildIndex() {
+  const allChunks = [];
+  state.documents.forEach(doc => {
+    doc.chunks.forEach((c, i) => allChunks.push({ chunk: c, docName: doc.name, chunkIdx: i }));
+  });
+
+  const embedder = new BagOfWordsEmbedder();
+  embedder.buildVocab(allChunks.map(c => c.chunk));
+
+  state.embeddings = allChunks.map(item => ({
+    ...item,
+    embedding: embedder.embed(item.chunk),
+    embedder,
+  }));
+  state._embedder = embedder;
+}
+
+function search(query, k = 5) {
+  if (!state._embedder || state.embeddings.length === 0) return [];
+  const qVec = state._embedder.embed(query);
+  const scored = state.embeddings.map(item => ({
+    ...item,
+    score: cosine(qVec, item.embedding),
+  }));
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, k);
+}
+
+// ── Groq API call ─────────────────────────────
+async function callGroq(systemPrompt, userPrompt, model) {
+  const key = document.getElementById('apiKey').value.trim();
+  if (!key) throw new Error('Groq API key required. Enter it in the sidebar.');
+
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${key}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user',   content: userPrompt },
+      ],
+      temperature: 0.2,
+      max_tokens: 1200,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.message || `Groq API error ${res.status}`);
+  }
+  const data = await res.json();
+  return data.choices[0].message.content.trim();
+}
+
+// ── Send query ────────────────────────────────
+window.sendQuery = async function() {
+  const input  = document.getElementById('chatInput');
+  const query  = input.value.trim();
+  if (!query) return;
+  if (state.documents.length === 0) { toast('Upload documents first!', 'error'); return; }
+
+  const topK   = parseInt(document.getElementById('topK').value) || 5;
+  const model  = document.getElementById('modelSelect').value;
+
+  input.value = '';
+  autoResize(input);
+
+  // hide welcome
+  document.getElementById('welcome')?.remove();
+  document.getElementById('statsRow').style.display = 'flex';
+
+  appendMsg('user', query, []);
+  const thinkEl = appendThinking();
+  setLoading(true);
+
+  try {
+    const results = search(query, topK);
+    const context = results.map((r, i) =>
+      `[${i+1}] Source: ${r.docName} (chunk ${r.chunkIdx + 1})\n${r.chunk}`
+    ).join('\n\n---\n\n');
+
+    const systemPrompt = `You are a precise document assistant. Answer using ONLY the provided context excerpts.
+If the context lacks sufficient information, say so clearly.
+Always mention which document(s) your answer comes from.
+Be concise but thorough.`;
+
+    const userPrompt = `Context:\n\n${context}\n\nQuestion: ${query}\n\nAnswer:`;
+    const answer = await callGroq(systemPrompt, userPrompt, model);
+
+    thinkEl.remove();
+    appendMsg('ai', answer, results);
+    state.queryCount++;
+    updateStats();
+
+  } catch(e) {
+    thinkEl.remove();
+    appendMsg('ai', `⚠️ Error: ${e.message}`, []);
+    toast(e.message, 'error', 5000);
+  } finally {
+    setLoading(false);
+  }
+};
+
+// ── Render helpers ────────────────────────────
+function appendMsg(role, text, sources) {
+  const container = document.getElementById('messages');
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+
+  const avatarIcon = role === 'ai' ? '🤖' : '👤';
+  const avatarClass = role === 'ai' ? 'ai' : 'user-av';
+
+  let sourcesHTML = '';
+  if (role === 'ai' && sources.length > 0) {
+    const chips = sources.map(r =>
+      `<span class="source-chip">📄 ${r.docName} <span class="source-score">${(r.score * 100).toFixed(0)}%</span></span>`
+    ).join('');
+    sourcesHTML = `<div class="sources"><div class="sources-label">Sources</div>${chips}</div>`;
+  }
+
+  div.innerHTML = `
+    <div class="avatar ${avatarClass}">${avatarIcon}</div>
+    <div class="bubble">
+      <div class="bubble-text">${escHtml(text)}</div>
+      ${sourcesHTML}
+    </div>`;
+
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+  return div;
+}
+
+function appendThinking() {
+  const container = document.getElementById('messages');
+  const div = document.createElement('div');
+  div.className = 'thinking';
+  div.innerHTML = `
+    <div class="avatar ai">🤖</div>
+    <div class="typing-dots">
+      <div class="dot"></div><div class="dot"></div><div class="dot"></div>
+    </div>`;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+  return div;
+}
+
+function escHtml(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+}
+
+// ── Doc list render ───────────────────────────
+window.removeDoc = function(name) {
+  state.documents = state.documents.filter(d => d.name !== name);
+  rebuildIndex();
+  renderDocList();
+  updateStats();
+  toast(`Removed "${name}"`, 'info');
+};
+
+function renderDocList() {
+  const list = document.getElementById('docList');
+  const empty = document.getElementById('emptyDocs');
+  if (state.documents.length === 0) {
+    list.innerHTML = '<div class="empty-docs" id="emptyDocs">No documents ingested yet.<br/>Upload files above to begin.</div>';
+    updateStatusPill('warn', 'No docs loaded');
+    return;
+  }
+  list.innerHTML = state.documents.map(doc => `
+    <div class="doc-item">
+      <div class="doc-icon">${doc.name.endsWith('.pdf') ? '📕' : '📄'}</div>
+      <div class="doc-info">
+        <div class="doc-name">${escHtml(doc.name)}</div>
+        <div class="doc-meta">${doc.chunks.length} chunks</div>
+      </div>
+      <button class="doc-remove" onclick="removeDoc('${escHtml(doc.name)}')" title="Remove">✕</button>
+    </div>`).join('');
+  updateStatusPill('ok', `${state.documents.length} doc${state.documents.length > 1 ? 's' : ''} ready`);
+}
+
+function updateStatusPill(type, text) {
+  const pill = document.getElementById('statusPill');
+  pill.className = `pill ${type}`;
+  document.getElementById('statusText').textContent = text;
+}
+
+function updateStats() {
+  const totalChunks = state.documents.reduce((s, d) => s + d.chunks.length, 0);
+  document.getElementById('statChunks').textContent = totalChunks;
+  document.getElementById('statDocs').textContent   = state.documents.length;
+  document.getElementById('statQueries').textContent = state.queryCount;
+}
+
+// ── Model badge ───────────────────────────────
+window.updateModelBadge = function() {
+  const model = document.getElementById('modelSelect').value;
+  document.getElementById('modelBadge').textContent = `groq / ${model.split('-')[0]}`;
+};
+
+// ── File drop / input ─────────────────────────
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  [...e.dataTransfer.files].forEach(ingestFile);
+});
+fileInput.addEventListener('change', e => {
+  [...e.target.files].forEach(ingestFile);
+  fileInput.value = '';
+});
+
+// ── Keyboard shortcut ─────────────────────────
+document.getElementById('chatInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendQuery();
+  }
+});
+document.getElementById('chatInput').addEventListener('input', function() {
+  autoResize(this);
+});
+</script>
+</body>
+</html>

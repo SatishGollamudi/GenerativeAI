@@ -1,0 +1,5 @@
+This is a test document about Artificial Intelligence. 
+AI is transforming industries like healthcare, finance, and education. 
+Groq is a fast AI inference engine that runs large language models. 
+RAG stands for Retrieval Augmented Generation. 
+Vector embeddings help find similar text chunks efficiently. 

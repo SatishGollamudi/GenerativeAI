@@ -1,0 +1,16 @@
+﻿============================================================
+  QUESTION:  What is Fusion Retrieval?
+============================================================
+
+ANSWER:
+
+Fusion retrieval is an approach that leverages the knowledge from multiple pulled documents (search results) and combines it into a more meaningful and accurate context. This is done by applying specialized mechanisms to combine relevant information across multiple documents, which can occur either in the augmentation stage (retrieval stage) or in the generation stage. (Source: RAG Application.docx, pages 4 and 3)
+
+------------------------------------------------------------
+SOURCES USED:
+  - RAG Application.docx  (page 4)  similarity=0.619
+  - RAG Application.docx  (page 5)  similarity=0.391
+  - RAG Application.docx  (page 3)  similarity=0.347
+  - RAG Application.docx  (page 2)  similarity=0.294
+  - RAG Application.docx  (page 1)  similarity=0.127
+------------------------------------------------------------
